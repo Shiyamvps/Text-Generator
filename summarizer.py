@@ -35,13 +35,58 @@ def get_openai_client():
     return OpenAI(api_key=api_key)
 
 # --------------------------------------------------
-# 1. TEXT SUMMARIZATION
+# LANGUAGE DETECTION
+# --------------------------------------------------
+
+def detect_language(text):
+
+    if not text or not text.strip():
+        raise ValueError("No content available for language detection.")
+
+    llm = ChatOpenAI(
+        model="gpt-4o-mini",
+        temperature=0
+    )
+
+    prompt = PromptTemplate(
+        input_variables=["text"],
+        template="""
+Identify the primary language of the following content.
+
+Instructions:
+- Return only the language name in English.
+- Do not translate the content.
+- Do not summarize the content.
+- Do not guess based on names or isolated words.
+- Identify the dominant language of the actual sentences.
+- If the content is English, return exactly: English.
+- If the content is Tamil, return exactly: Tamil.
+- If the content is Hindi, return exactly: Hindi.
+- For mixed-language content, identify the dominant language.
+
+CONTENT:
+{text}
+
+Language:
+"""
+    )
+
+    chain = prompt | llm | StrOutputParser()
+
+    language = chain.invoke({"text": text}).strip()
+
+    return language.strip(" .\n")
+
+# --------------------------------------------------
+# TEXT SUMMARIZATION
 # --------------------------------------------------
 
 def summarize_text(text, length, summary_format):
 
     if not text or not text.strip():
         raise ValueError("Please provide some text to summarize.")
+
+    language = detect_language(text)
 
     llm = ChatOpenAI(
         model="gpt-4o-mini",
@@ -52,21 +97,28 @@ def summarize_text(text, length, summary_format):
         input_variables=[
             "text",
             "length",
-            "summary_format"
+            "summary_format",
+            "language"
         ],
         template="""
-You are an expert multilingual text summarization assistant.
+You are an expert multilingual summarization assistant.
 
-LANGUAGE INSTRUCTIONS:
+MANDATORY LANGUAGE RULE:
 
-1. Identify the language of the original content.
-2. Write the summary in the SAME language as the original.
-3. Tamil content must produce a Tamil summary.
-4. Hindi content must produce a Hindi summary.
-5. English content must produce an English summary.
-6. Do not translate the content into English.
-7. Preserve important facts, names and technical terms.
-8. For mixed-language content, use its dominant language.
+The source content language has already been identified as:
+{language}
+
+Write the entire summary ONLY in {language}.
+
+Important:
+- If the source language is English, the summary MUST be in English.
+- If the source language is Tamil, the summary MUST be in Tamil.
+- If the source language is Hindi, the summary MUST be in Hindi.
+- Never change the source language.
+- Never translate the summary into another language.
+- Do not use Tamil or any other language when the source is English.
+- Preserve important facts, names, numbers and technical terms.
+- For mixed-language content, use the identified dominant language.
 
 SUMMARY LENGTH:
 {length}
@@ -83,20 +135,23 @@ FORMATTING:
 ORIGINAL CONTENT:
 {text}
 
-Generate the summary:
+Generate the summary ONLY in {language}:
 """
     )
 
     chain = prompt | llm | StrOutputParser()
 
-    return chain.invoke({
+    summary = chain.invoke({
         "text": text,
         "length": length,
-        "summary_format": summary_format
+        "summary_format": summary_format,
+        "language": language
     })
 
+    return summary, language
+
 # --------------------------------------------------
-# 2. TRANSLATE SUMMARY INTO ENGLISH
+# TRANSLATE SUMMARY INTO ENGLISH
 # --------------------------------------------------
 
 def translate_summary_to_english(summary, summary_format):
@@ -114,23 +169,19 @@ def translate_summary_to_english(summary, summary_format):
         template="""
 You are an expert multilingual translator.
 
-Translate the following summary into English.
+Translate the complete summary into English.
 
-IMPORTANT INSTRUCTIONS:
-
-1. Translate the complete summary into English.
-2. Preserve the original meaning and important details.
-3. Do not add new information.
-4. Do not remove important information.
-5. Preserve names, numbers and technical terms.
-6. Maintain the original structure and formatting.
+Instructions:
+- Preserve the original meaning and important details.
+- Do not add new information.
+- Do not remove important information.
+- Preserve names, numbers and technical terms.
+- Maintain the original structure and formatting.
 
 OUTPUT FORMAT:
 {summary_format}
 
-If the original is in bullet points, return English
-bullet points.
-
+If the original is in bullet points, return English bullet points.
 If the original is in paragraphs, return English paragraphs.
 
 SUMMARY TO TRANSLATE:
@@ -148,7 +199,7 @@ Return only the English translation.
     })
 
 # --------------------------------------------------
-# 3. DOCUMENT TEXT EXTRACTION
+# DOCUMENT TEXT EXTRACTION
 # --------------------------------------------------
 
 def extract_document_text(uploaded_file):
@@ -164,10 +215,7 @@ def extract_document_text(uploaded_file):
 
         pages = []
 
-        for page_number, page in enumerate(
-            reader.pages,
-            start=1
-        ):
+        for page_number, page in enumerate(reader.pages, start=1):
 
             page_text = page.extract_text() or ""
 
@@ -272,7 +320,7 @@ def extract_document_text(uploaded_file):
         )
 
 # --------------------------------------------------
-# 4. IMAGE DESCRIPTION
+# IMAGE DESCRIPTION
 # --------------------------------------------------
 
 def describe_image(
@@ -403,7 +451,7 @@ and overall atmosphere.
     return response.choices[0].message.content
 
 # --------------------------------------------------
-# 5. WORD COUNT
+# WORD COUNT
 # --------------------------------------------------
 
 def count_words(text):
