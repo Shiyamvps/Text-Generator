@@ -16,13 +16,7 @@ from pypdf import PdfReader
 from docx import Document
 from pptx import Presentation
 
-
-# --------------------------------------------------
-# LOAD ENVIRONMENT VARIABLES
-# --------------------------------------------------
-
 load_dotenv()
-
 
 # --------------------------------------------------
 # OPENAI CLIENT
@@ -40,7 +34,6 @@ def get_openai_client():
 
     return OpenAI(api_key=api_key)
 
-
 # --------------------------------------------------
 # 1. TEXT SUMMARIZATION
 # --------------------------------------------------
@@ -48,9 +41,7 @@ def get_openai_client():
 def summarize_text(text, length, summary_format):
 
     if not text or not text.strip():
-        raise ValueError(
-            "Please provide some text to summarize."
-        )
+        raise ValueError("Please provide some text to summarize.")
 
     llm = ChatOpenAI(
         model="gpt-4o-mini",
@@ -66,20 +57,16 @@ def summarize_text(text, length, summary_format):
         template="""
 You are an expert multilingual text summarization assistant.
 
-Your task is to summarize the provided content.
-
 LANGUAGE INSTRUCTIONS:
 
-1. First identify the language of the original content.
-2. Write the entire summary in the SAME language as the original.
-3. If the original content is in Tamil, summarize in Tamil.
-4. If the original content is in Hindi, summarize in Hindi.
-5. If the original content is in English, summarize in English.
-6. Do not translate the content into English unless the
-   original content is in English.
+1. Identify the language of the original content.
+2. Write the summary in the SAME language as the original.
+3. Tamil content must produce a Tamil summary.
+4. Hindi content must produce a Hindi summary.
+5. English content must produce an English summary.
+6. Do not translate the content into English.
 7. Preserve important facts, names and technical terms.
-8. If the content contains multiple languages, use the
-   dominant language of the original content.
+8. For mixed-language content, use its dominant language.
 
 SUMMARY LENGTH:
 {length}
@@ -87,46 +74,90 @@ SUMMARY LENGTH:
 SUMMARY FORMAT:
 {summary_format}
 
-FORMATTING INSTRUCTIONS:
-
-1. If the format is Bulleted Points, use clear bullet points.
-2. If the format is Paragraph, use connected paragraphs.
-3. Do not mix both formats.
-4. Keep the summary clear and meaningful.
-5. Do not invent information.
-6. Preserve important information from the original content.
+FORMATTING:
+- Bulleted Points: use clear bullet points.
+- Paragraph: use connected paragraphs.
+- Do not mix both formats.
+- Do not invent information.
 
 ORIGINAL CONTENT:
 {text}
 
-Generate the summary now:
+Generate the summary:
 """
     )
 
     chain = prompt | llm | StrOutputParser()
 
-    summary = chain.invoke({
+    return chain.invoke({
         "text": text,
         "length": length,
         "summary_format": summary_format
     })
 
-    return summary
+# --------------------------------------------------
+# 2. TRANSLATE SUMMARY INTO ENGLISH
+# --------------------------------------------------
 
+def translate_summary_to_english(summary, summary_format):
+
+    if not summary or not summary.strip():
+        raise ValueError("No summary is available to translate.")
+
+    llm = ChatOpenAI(
+        model="gpt-4o-mini",
+        temperature=0
+    )
+
+    prompt = PromptTemplate(
+        input_variables=["summary", "summary_format"],
+        template="""
+You are an expert multilingual translator.
+
+Translate the following summary into English.
+
+IMPORTANT INSTRUCTIONS:
+
+1. Translate the complete summary into English.
+2. Preserve the original meaning and important details.
+3. Do not add new information.
+4. Do not remove important information.
+5. Preserve names, numbers and technical terms.
+6. Maintain the original structure and formatting.
+
+OUTPUT FORMAT:
+{summary_format}
+
+If the original is in bullet points, return English
+bullet points.
+
+If the original is in paragraphs, return English paragraphs.
+
+SUMMARY TO TRANSLATE:
+{summary}
+
+Return only the English translation.
+"""
+    )
+
+    chain = prompt | llm | StrOutputParser()
+
+    return chain.invoke({
+        "summary": summary,
+        "summary_format": summary_format
+    })
 
 # --------------------------------------------------
-# 2. DOCUMENT TEXT EXTRACTION
+# 3. DOCUMENT TEXT EXTRACTION
 # --------------------------------------------------
 
 def extract_document_text(uploaded_file):
 
     file_name = uploaded_file.name
-
     extension = file_name.rsplit(".", 1)[-1].lower()
 
     file_bytes = uploaded_file.getvalue()
 
-    # PDF FILE
     if extension == "pdf":
 
         reader = PdfReader(BytesIO(file_bytes))
@@ -146,24 +177,18 @@ def extract_document_text(uploaded_file):
 
         return "\n\n".join(pages)
 
-    # CSV FILE
     elif extension == "csv":
 
         dataframe = pd.read_csv(
-            StringIO(
-                file_bytes.decode("utf-8-sig")
-            ),
+            StringIO(file_bytes.decode("utf-8-sig")),
             dtype=str
         ).fillna("")
 
         return dataframe.to_string(index=False)
 
-    # EXCEL FILE
     elif extension in ["xlsx", "xls"]:
 
-        excel_file = pd.ExcelFile(
-            BytesIO(file_bytes)
-        )
+        excel_file = pd.ExcelFile(BytesIO(file_bytes))
 
         all_sheets = []
 
@@ -182,12 +207,9 @@ def extract_document_text(uploaded_file):
 
         return "\n\n".join(all_sheets)
 
-    # WORD FILE
     elif extension == "docx":
 
-        document = Document(
-            BytesIO(file_bytes)
-        )
+        document = Document(BytesIO(file_bytes))
 
         paragraphs = [
             paragraph.text
@@ -195,7 +217,6 @@ def extract_document_text(uploaded_file):
             if paragraph.text.strip()
         ]
 
-        # Extract text from tables too
         for table in document.tables:
 
             for row in table.rows:
@@ -208,12 +229,9 @@ def extract_document_text(uploaded_file):
 
         return "\n".join(paragraphs)
 
-    # POWERPOINT FILE
     elif extension == "pptx":
 
-        presentation = Presentation(
-            BytesIO(file_bytes)
-        )
+        presentation = Presentation(BytesIO(file_bytes))
 
         slides_text = []
 
@@ -240,16 +258,7 @@ def extract_document_text(uploaded_file):
 
         return "\n\n".join(slides_text)
 
-    # TEXT FILE
-    elif extension == "txt":
-
-        return file_bytes.decode(
-            "utf-8-sig",
-            errors="replace"
-        )
-
-    # MARKDOWN FILE
-    elif extension == "md":
+    elif extension in ["txt", "md"]:
 
         return file_bytes.decode(
             "utf-8-sig",
@@ -262,9 +271,8 @@ def extract_document_text(uploaded_file):
             f"The .{extension} file format is not supported."
         )
 
-
 # --------------------------------------------------
-# 3. IMAGE DESCRIPTION
+# 4. IMAGE DESCRIPTION
 # --------------------------------------------------
 
 def describe_image(
@@ -285,38 +293,50 @@ def describe_image(
     )
 
     if summary_format == "Bulleted Points":
+
         formatting_instruction = """
 Use clear and informative bullet points.
 Do not write long paragraphs.
 """
+
     else:
+
         formatting_instruction = """
 Write the description in connected paragraphs.
 Do not use bullet points.
 """
 
     if summary_length == "Short":
+
         length_instruction = """
 Give a brief description covering only the most important
 visible details.
 """
+
     elif summary_length == "Medium":
+
         length_instruction = """
 Give a moderately detailed description covering the main
 subjects, actions, appearance and surroundings.
 """
+
     else:
+
         length_instruction = """
-Give a comprehensive and detailed description covering
-the subjects, appearance, clothing, expressions, actions,
-background, objects and overall atmosphere.
+Give a comprehensive description covering subjects,
+appearance, clothing, expressions, actions, background,
+objects and overall atmosphere.
 """
 
     response = client.chat.completions.create(
+
         model="gpt-4o-mini",
+
         messages=[
+
             {
                 "role": "system",
+
                 "content": f"""
 You are an advanced visual image analysis assistant.
 
@@ -343,32 +363,47 @@ DESCRIPTION FORMAT:
 Write the description in English.
 """
             },
+
             {
                 "role": "user",
+
                 "content": [
+
                     {
                         "type": "text",
-                        "text": "Describe this image according to the selected length and format."
+
+                        "text": """
+Describe this image according to the selected
+summary length and format.
+
+Explain the main subjects, their visible appearance,
+actions, expressions, clothing, objects, background
+and overall atmosphere.
+"""
                     },
+
                     {
                         "type": "image_url",
+
                         "image_url": {
                             "url": image_data_url,
                             "detail": "high"
                         }
                     }
+
                 ]
             }
+
         ],
+
         max_tokens=1500,
         temperature=0
     )
 
     return response.choices[0].message.content
 
-
 # --------------------------------------------------
-# 4. WORD COUNT
+# 5. WORD COUNT
 # --------------------------------------------------
 
 def count_words(text):
