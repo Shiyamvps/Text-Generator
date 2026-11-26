@@ -31,9 +31,16 @@ st.write(
 
 state_defaults = {
     "document_summary": None,
+    "document_language": None,
     "document_translation": None,
+    "document_source": None,
+
     "paste_summary": None,
-    "paste_translation": None
+    "paste_language": None,
+    "paste_translation": None,
+    "paste_source": None,
+
+    "image_description": None
 }
 
 for key, value in state_defaults.items():
@@ -42,99 +49,131 @@ for key, value in state_defaults.items():
         st.session_state[key] = value
 
 # --------------------------------------------------
-# WORD COUNT COMPARISON
+# WORD COUNT DISPLAY
 # --------------------------------------------------
 
-def show_word_count_comparison(
+def show_word_counts(
     original_count,
-    summary_count
+    summary_count,
+    translation=None
 ):
 
+    st.divider()
     st.subheader("Word Count Comparison")
 
-    left, right = st.columns(2)
+    if translation:
 
-    with left:
+        col1, col2, col3 = st.columns(3)
 
-        st.metric(
-            "Original Content Word Count",
-            original_count
-        )
+        with col1:
+            st.metric(
+                "Length of Content",
+                original_count
+            )
 
-    with right:
+        with col2:
+            st.metric(
+                "Length of Summary",
+                summary_count
+            )
 
-        st.metric(
-            "Summary Word Count",
-            summary_count
-        )
+        with col3:
+            st.metric(
+                "English Summary",
+                count_words(translation)
+            )
+
+    else:
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.metric(
+                "Original Content",
+                original_count
+            )
+
+        with col2:
+            st.metric(
+                "Summary",
+                summary_count
+            )
 
 # --------------------------------------------------
-# DISPLAY TRANSLATION
+# DISPLAY SUMMARY AND OPTIONAL TRANSLATION
 # --------------------------------------------------
 
-def display_translation(
+def display_summary(
     summary,
-    translation,
-    original_key,
+    language,
     translation_key,
     summary_format
 ):
 
-    st.subheader("Original Language Summary")
+    st.subheader("Summarization")
 
     st.markdown(summary)
 
-    st.metric(
-        "Original Summary Word Count",
-        count_words(summary)
-    )
+    translation = None
 
-    if st.button(
-        "Translate to English",
-        key=translation_key
-    ):
+    # Show translation option only for non-English content
+    if language.strip().lower() not in [
+        "english",
+        "english (us)",
+        "english (uk)"
+    ]:
 
-        try:
+        if st.button(
+            "Translate to English",
+            key=translation_key
+        ):
 
-            with st.spinner("Translating summary into English..."):
+            try:
 
-                english_translation = translate_summary_to_english(
-                    summary,
-                    summary_format
+                with st.spinner(
+                    "Translating summary into English..."
+                ):
+
+                    translation = translate_summary_to_english(
+                        summary,
+                        summary_format
+                    )
+
+                st.session_state[
+                    translation_key + "_result"
+                ] = translation
+
+            except Exception as e:
+
+                st.error(
+                    f"Translation failed: {e}"
                 )
 
-            st.session_state[original_key + "_translation"] = (
-                english_translation
+        translation = st.session_state.get(
+            translation_key + "_result"
+        )
+
+        if translation:
+
+            st.divider()
+
+            st.subheader("English Translation")
+
+            st.markdown(translation)
+
+            st.download_button(
+                "Download English Translation",
+
+                data=translation,
+
+                file_name="english_translation.txt",
+
+                mime="text/plain",
+
+                key=translation_key + "_download"
             )
 
-        except Exception as e:
-
-            st.error(f"Translation failed: {e}")
-
-    saved_translation = st.session_state.get(
-        original_key + "_translation"
-    )
-
-    if saved_translation:
-
-        st.divider()
-
-        st.subheader("English Translation")
-
-        st.markdown(saved_translation)
-
-        st.metric(
-            "English Translation Word Count",
-            count_words(saved_translation)
-        )
-
-        st.download_button(
-            "Download English Translation",
-            data=saved_translation,
-            file_name="english_translation.txt",
-            mime="text/plain",
-            key=translation_key + "_download"
-        )
+    return translation
 
 # --------------------------------------------------
 # INPUT METHOD
@@ -236,17 +275,20 @@ if input_method == "Upload a Document":
                     try:
 
                         with st.spinner(
-                            "Summarizing your document..."
+                            "Detecting language and summarizing your document..."
                         ):
 
-                            summary = summarize_text(
+                            summary, language = summarize_text(
                                 extracted_text,
                                 summary_length,
                                 summary_format
                             )
 
                         st.session_state.document_summary = summary
+                        st.session_state.document_language = language
+                        st.session_state.document_source = extracted_text
                         st.session_state.document_translation = None
+                        st.session_state.document_translate_button_result = None
 
                     except Exception as e:
 
@@ -254,30 +296,19 @@ if input_method == "Upload a Document":
                             f"Unable to summarize document: {e}"
                         )
 
-                # Display saved summary
-                if st.session_state.document_summary:
+                # Display summary only when it belongs to current document
+                if (
+                    st.session_state.document_summary
+                    and st.session_state.document_source == extracted_text
+                ):
 
                     st.divider()
 
-                    display_translation(
+                    translation = display_summary(
                         st.session_state.document_summary,
-                        st.session_state.document_translation,
-                        "document_summary",
+                        st.session_state.document_language,
                         "document_translate_button",
                         summary_format
-                    )
-
-                    original_count = count_words(extracted_text)
-
-                    summary_count = count_words(
-                        st.session_state.document_summary
-                    )
-
-                    st.divider()
-
-                    show_word_count_comparison(
-                        original_count,
-                        summary_count
                     )
 
                     st.download_button(
@@ -290,6 +321,12 @@ if input_method == "Upload a Document":
                         mime="text/plain",
 
                         key="document_download"
+                    )
+
+                    show_word_counts(
+                        count_words(extracted_text),
+                        count_words(st.session_state.document_summary),
+                        translation
                     )
 
             else:
@@ -420,17 +457,20 @@ elif input_method == "Paste Content":
             try:
 
                 with st.spinner(
-                    "Generating your summary..."
+                    "Detecting language and generating your summary..."
                 ):
 
-                    summary = summarize_text(
+                    summary, language = summarize_text(
                         pasted_text,
                         summary_length,
                         summary_format
                     )
 
                 st.session_state.paste_summary = summary
+                st.session_state.paste_language = language
+                st.session_state.paste_source = pasted_text
                 st.session_state.paste_translation = None
+                st.session_state.paste_translate_button_result = None
 
             except Exception as e:
 
@@ -444,30 +484,19 @@ elif input_method == "Paste Content":
                 "Please enter some content before summarizing."
             )
 
-    # Display saved summary
-    if st.session_state.paste_summary:
+    # Display summary only when it belongs to current pasted content
+    if (
+        st.session_state.paste_summary
+        and st.session_state.paste_source == pasted_text
+    ):
 
         st.divider()
 
-        display_translation(
+        translation = display_summary(
             st.session_state.paste_summary,
-            st.session_state.paste_translation,
-            "paste_summary",
+            st.session_state.paste_language,
             "paste_translate_button",
             summary_format
-        )
-
-        original_count = count_words(pasted_text)
-
-        summary_count = count_words(
-            st.session_state.paste_summary
-        )
-
-        st.divider()
-
-        show_word_count_comparison(
-            original_count,
-            summary_count
         )
 
         st.download_button(
@@ -480,4 +509,10 @@ elif input_method == "Paste Content":
             mime="text/plain",
 
             key="paste_download"
+        )
+
+        show_word_counts(
+            count_words(pasted_text),
+            count_words(st.session_state.paste_summary),
+            translation
         )
