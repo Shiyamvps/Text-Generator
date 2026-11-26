@@ -4,9 +4,9 @@ from summarizer import (
     summarize_text,
     extract_document_text,
     describe_image,
+    translate_summary_to_english,
     count_words
 )
-
 
 # --------------------------------------------------
 # PAGE CONFIGURATION
@@ -25,6 +25,21 @@ st.write(
     "or summarize pasted content."
 )
 
+# --------------------------------------------------
+# SESSION STATE
+# --------------------------------------------------
+
+state_defaults = {
+    "document_summary": None,
+    "document_translation": None,
+    "paste_summary": None,
+    "paste_translation": None
+}
+
+for key, value in state_defaults.items():
+
+    if key not in st.session_state:
+        st.session_state[key] = value
 
 # --------------------------------------------------
 # WORD COUNT COMPARISON
@@ -42,17 +57,84 @@ def show_word_count_comparison(
     with left:
 
         st.metric(
-            label="Original Content Word Count",
-            value=original_count
+            "Original Content Word Count",
+            original_count
         )
 
     with right:
 
         st.metric(
-            label="Summary Word Count",
-            value=summary_count
+            "Summary Word Count",
+            summary_count
         )
 
+# --------------------------------------------------
+# DISPLAY TRANSLATION
+# --------------------------------------------------
+
+def display_translation(
+    summary,
+    translation,
+    original_key,
+    translation_key,
+    summary_format
+):
+
+    st.subheader("Original Language Summary")
+
+    st.markdown(summary)
+
+    st.metric(
+        "Original Summary Word Count",
+        count_words(summary)
+    )
+
+    if st.button(
+        "Translate to English",
+        key=translation_key
+    ):
+
+        try:
+
+            with st.spinner("Translating summary into English..."):
+
+                english_translation = translate_summary_to_english(
+                    summary,
+                    summary_format
+                )
+
+            st.session_state[original_key + "_translation"] = (
+                english_translation
+            )
+
+        except Exception as e:
+
+            st.error(f"Translation failed: {e}")
+
+    saved_translation = st.session_state.get(
+        original_key + "_translation"
+    )
+
+    if saved_translation:
+
+        st.divider()
+
+        st.subheader("English Translation")
+
+        st.markdown(saved_translation)
+
+        st.metric(
+            "English Translation Word Count",
+            count_words(saved_translation)
+        )
+
+        st.download_button(
+            "Download English Translation",
+            data=saved_translation,
+            file_name="english_translation.txt",
+            mime="text/plain",
+            key=translation_key + "_download"
+        )
 
 # --------------------------------------------------
 # INPUT METHOD
@@ -74,18 +156,26 @@ input_method = st.radio(
 # SUMMARY SETTINGS
 # --------------------------------------------------
 
-st.subheader("Summarization Type")
+st.subheader("Summary Settings")
 
-# Summary length for all three input methods
 summary_length = st.selectbox(
     "Select Summary Length",
-    ["Short", "Medium", "Detailed"]
+
+    [
+        "Short",
+        "Medium",
+        "Detailed"
+    ]
 )
 
-# Format selection for all three input methods
 summary_format = st.radio(
     "How would you like your summary?",
-    ["Bulleted Points", "Paragraph"],
+
+    [
+        "Bulleted Points",
+        "Paragraph"
+    ],
+
     horizontal=True
 )
 
@@ -118,18 +208,14 @@ if input_method == "Upload a Document":
 
         try:
 
-            # Extract document content
             extracted_text = extract_document_text(
                 uploaded_file
             )
 
             if extracted_text and extracted_text.strip():
 
-                st.subheader(
-                    "Extracted Document Content"
-                )
+                st.subheader("Extracted Document Content")
 
-                # Display extracted content
                 st.text_area(
                     "Content extracted from your document",
 
@@ -142,38 +228,51 @@ if input_method == "Upload a Document":
                     key="extracted_document_content"
                 )
 
-                # Generate document summary
                 if st.button(
                     "Generate Summary",
                     key="document_summary_button"
                 ):
 
-                    with st.spinner(
-                        "Summarizing your document..."
-                    ):
+                    try:
 
-                        summary = summarize_text(
-                            extracted_text,
-                            summary_length,
-                            summary_format
+                        with st.spinner(
+                            "Summarizing your document..."
+                        ):
+
+                            summary = summarize_text(
+                                extracted_text,
+                                summary_length,
+                                summary_format
+                            )
+
+                        st.session_state.document_summary = summary
+                        st.session_state.document_translation = None
+
+                    except Exception as e:
+
+                        st.error(
+                            f"Unable to summarize document: {e}"
                         )
 
-                    st.subheader(
-                        "Generated Summary"
+                # Display saved summary
+                if st.session_state.document_summary:
+
+                    st.divider()
+
+                    display_translation(
+                        st.session_state.document_summary,
+                        st.session_state.document_translation,
+                        "document_summary",
+                        "document_translate_button",
+                        summary_format
                     )
 
-                    st.markdown(summary)
-
-                    # Calculate word counts
-                    original_count = count_words(
-                        extracted_text
-                    )
+                    original_count = count_words(extracted_text)
 
                     summary_count = count_words(
-                        summary
+                        st.session_state.document_summary
                     )
 
-                    # Display comparison at the bottom
                     st.divider()
 
                     show_word_count_comparison(
@@ -181,11 +280,10 @@ if input_method == "Upload a Document":
                         summary_count
                     )
 
-                    # Download summary
                     st.download_button(
-                        label="Download Summary",
+                        "Download Original Summary",
 
-                        data=summary,
+                        data=st.session_state.document_summary,
 
                         file_name="document_summary.txt",
 
@@ -205,7 +303,6 @@ if input_method == "Upload a Document":
             st.error(
                 f"Unable to process the document: {e}"
             )
-
 
 # --------------------------------------------------
 # OPTION 2: IMAGE UPLOAD
@@ -229,7 +326,6 @@ elif input_method == "Upload an Image":
 
     if uploaded_image is not None:
 
-        # Display uploaded image
         st.image(
             uploaded_image,
 
@@ -238,7 +334,6 @@ elif input_method == "Upload an Image":
             use_container_width=True
         )
 
-        # Generate image description
         if st.button(
             "Describe Image",
             key="describe_image_button"
@@ -252,48 +347,12 @@ elif input_method == "Upload an Image":
 
                     image_description = describe_image(
                         uploaded_image.getvalue(),
-
                         uploaded_image.type,
-
                         summary_format,
-                        
                         summary_length
                     )
 
-                st.subheader(
-                    "Detailed Image Description"
-                )
-
-                # Display description in selected format
-                st.markdown(image_description)
-
-                # Calculate description word count
-                description_count = count_words(
-                    image_description
-                )
-
-                st.divider()
-
-                st.subheader("Word Count")
-
-                st.metric(
-                    label="Description Word Count",
-
-                    value=description_count
-                )
-
-                # Download image description
-                st.download_button(
-                    label="Download Image Description",
-
-                    data=image_description,
-
-                    file_name="image_description.txt",
-
-                    mime="text/plain",
-
-                    key="image_download"
-                )
+                st.session_state.image_description = image_description
 
             except Exception as e:
 
@@ -301,6 +360,37 @@ elif input_method == "Upload an Image":
                     f"Unable to describe the image: {e}"
                 )
 
+        if st.session_state.get("image_description"):
+
+            st.subheader("Detailed Image Description")
+
+            st.markdown(
+                st.session_state.image_description
+            )
+
+            st.divider()
+
+            st.subheader("Word Count")
+
+            st.metric(
+                "Description Word Count",
+
+                count_words(
+                    st.session_state.image_description
+                )
+            )
+
+            st.download_button(
+                "Download Image Description",
+
+                data=st.session_state.image_description,
+
+                file_name="image_description.txt",
+
+                mime="text/plain",
+
+                key="image_download"
+            )
 
 # --------------------------------------------------
 # OPTION 3: PASTE CONTENT
@@ -320,7 +410,6 @@ elif input_method == "Paste Content":
         key="pasted_content"
     )
 
-    # Generate pasted text summary
     if st.button(
         "Generate Summary",
         key="paste_summary_button"
@@ -336,47 +425,12 @@ elif input_method == "Paste Content":
 
                     summary = summarize_text(
                         pasted_text,
-
                         summary_length,
-
                         summary_format
                     )
 
-                st.subheader(
-                    "Generated Summary"
-                )
-
-                st.markdown(summary)
-
-                # Calculate word counts
-                original_count = count_words(
-                    pasted_text
-                )
-
-                summary_count = count_words(
-                    summary
-                )
-
-                # Display comparison at the bottom
-                st.divider()
-
-                show_word_count_comparison(
-                    original_count,
-                    summary_count
-                )
-
-                # Download summary
-                st.download_button(
-                    label="Download Summary",
-
-                    data=summary,
-
-                    file_name="text_summary.txt",
-
-                    mime="text/plain",
-
-                    key="paste_download"
-                )
+                st.session_state.paste_summary = summary
+                st.session_state.paste_translation = None
 
             except Exception as e:
 
@@ -389,3 +443,41 @@ elif input_method == "Paste Content":
             st.warning(
                 "Please enter some content before summarizing."
             )
+
+    # Display saved summary
+    if st.session_state.paste_summary:
+
+        st.divider()
+
+        display_translation(
+            st.session_state.paste_summary,
+            st.session_state.paste_translation,
+            "paste_summary",
+            "paste_translate_button",
+            summary_format
+        )
+
+        original_count = count_words(pasted_text)
+
+        summary_count = count_words(
+            st.session_state.paste_summary
+        )
+
+        st.divider()
+
+        show_word_count_comparison(
+            original_count,
+            summary_count
+        )
+
+        st.download_button(
+            "Download Original Summary",
+
+            data=st.session_state.paste_summary,
+
+            file_name="text_summary.txt",
+
+            mime="text/plain",
+
+            key="paste_download"
+        )
